@@ -1,1 +1,205 @@
 # echoes11.github.io
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Дуэль</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #0e1621;
+      --card: #17212b;
+      --line: #233040;
+      --you: #6ab3f3;
+      --him: #e06c75;
+      --muted: #8b9bb4;
+      --text: #e8eef7;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; height: 100%;
+      background: var(--bg); color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      user-select: none;
+    }
+    body { display: flex; flex-direction: column; padding: 16px 16px 24px; }
+    header { text-align: center; margin-bottom: 18px; }
+    header b { font-size: 13px; letter-spacing: .28em; color: var(--muted); }
+    header p { margin: 6px 0 0; font-size: 22px; font-weight: 700; }
+    .bars { display: grid; gap: 12px; }
+    .row { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+    .meta { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
+    .meta span:last-child { font-variant-numeric: tabular-nums; color: var(--muted); }
+    .hp { height: 10px; background: #0b1118; border-radius: 99px; overflow: hidden; }
+    .hp i { display: block; height: 100%; width: 100%; transform-origin: left; transition: transform .18s ease; }
+    .you i { background: var(--you); }
+    .him i { background: var(--him); }
+    .log {
+      flex: 1; min-height: 120px; margin: 16px 0;
+      font-size: 15px; color: var(--muted); line-height: 1.45;
+    }
+    .log div { margin-bottom: 4px; }
+    .log .hit { color: var(--text); }
+    .log .crit { color: #ffd166; }
+    .log .miss { color: var(--muted); }
+    button.hit {
+      height: 64px; border: 0; border-radius: 16px;
+      background: var(--you); color: #0b1118;
+      font-size: 20px; font-weight: 800; letter-spacing: .08em;
+    }
+    button.hit:disabled { opacity: .35; }
+    button.hit:active:not(:disabled) { transform: scale(.98); }
+    .overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(8, 12, 18, .86);
+      align-items: center; justify-content: center; flex-direction: column;
+      padding: 24px; text-align: center;
+    }
+    .overlay.on { display: flex; }
+    .overlay h1 { font-size: 28px; margin: 0 0 8px; }
+    .overlay p { color: var(--muted); margin: 0 0 22px; }
+    .actions { display: flex; gap: 10px; }
+    .actions button {
+      height: 48px; padding: 0 18px; border: 0; border-radius: 12px;
+      font-size: 16px; font-weight: 700;
+    }
+    .again { background: var(--you); color: #0b1118; }
+    .share { background: var(--card); color: var(--text); border: 1px solid var(--line) !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <b>ДУЭЛЬ</b>
+    <p id="names">ты × шома</p>
+  </header>
+  <div class="bars">
+    <div class="row you">
+      <div class="meta"><span id="you-name">ты</span><span id="you-hp">10</span></div>
+      <div class="hp"><i id="you-bar"></i></div>
+    </div>
+    <div class="row him">
+      <div class="meta"><span>шома</span><span id="him-hp">10</span></div>
+      <div class="hp"><i id="him-bar"></i></div>
+    </div>
+  </div>
+  <div class="log" id="log"></div>
+  <button class="hit" id="hit" type="button">БИТЬ</button>
+  <div class="overlay" id="over">
+    <h1 id="over-title"></h1>
+    <p id="over-sub"></p>
+    <div class="actions">
+      <button class="again" id="again" type="button">ещё</button>
+      <button class="share" id="share" type="button">в чат</button>
+    </div>
+  </div>
+  <script>
+    const MAX = 10;
+    const tg = window.Telegram && window.Telegram.WebApp;
+    const user = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    const youName = (user && (user.first_name || user.username)) || "ты";
+    let you = MAX, him = MAX, busy = false, last = "";
+
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      const p = tg.themeParams || {};
+      if (p.bg_color) document.documentElement.style.setProperty("--bg", p.bg_color);
+      if (p.secondary_bg_color) document.documentElement.style.setProperty("--card", p.secondary_bg_color);
+      if (p.text_color) document.documentElement.style.setProperty("--text", p.text_color);
+      if (p.hint_color) document.documentElement.style.setProperty("--muted", p.hint_color);
+      if (p.button_color) document.documentElement.style.setProperty("--you", p.button_color);
+    }
+
+    document.getElementById("you-name").textContent = youName.toLowerCase();
+    document.getElementById("names").textContent = youName.toLowerCase() + " × шома";
+
+    const elYouHp = document.getElementById("you-hp");
+    const elHimHp = document.getElementById("him-hp");
+    const elYouBar = document.getElementById("you-bar");
+    const elHimBar = document.getElementById("him-bar");
+    const elLog = document.getElementById("log");
+    const elHit = document.getElementById("hit");
+    const elOver = document.getElementById("over");
+
+    function rumble(style) {
+      try { tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred(style || "medium"); } catch (e) {}
+    }
+    function roll(n) { return 1 + Math.floor(Math.random() * n); }
+    function paint() {
+      elYouHp.textContent = you;
+      elHimHp.textContent = him;
+      elYouBar.style.transform = "scaleX(" + (you / MAX) + ")";
+      elHimBar.style.transform = "scaleX(" + (him / MAX) + ")";
+    }
+    function line(html) {
+      elLog.insertAdjacentHTML("afterbegin", html);
+      while (elLog.childElementCount > 6) elLog.lastElementChild.remove();
+    }
+    function payload(win) {
+      return JSON.stringify({ w: win ? 1 : 0, u: you, s: him });
+    }
+    function summary(win) {
+      return win
+        ? (youName + " вынес Шому " + you + "–" + him)
+        : ("Шома вынес " + youName + " " + him + "–" + you);
+    }
+    function finish(win) {
+      busy = true;
+      elHit.disabled = true;
+      last = payload(win);
+      document.getElementById("over-title").textContent = win ? "ты" : "шома";
+      document.getElementById("over-sub").textContent = summary(win);
+      elOver.classList.add("on");
+      rumble(win ? "heavy" : "rigid");
+      try { tg && tg.sendData && tg.sendData(last); } catch (e) {}
+    }
+    function reset() {
+      you = MAX; him = MAX; busy = false; last = "";
+      elLog.innerHTML = "";
+      elHit.disabled = false;
+      elOver.classList.remove("on");
+      paint();
+      line('<div>бей, пока не ляжет</div>');
+    }
+    function shomaHit() {
+      if (Math.random() < 0.12) {
+        line('<div class="miss">шома: мимо</div>');
+        busy = false;
+        elHit.disabled = false;
+        return;
+      }
+      const dmg = Math.random() < 0.1 ? 4 : roll(3);
+      you = Math.max(0, you - dmg);
+      paint();
+      line('<div class="hit">шома: ' + (dmg === 4 ? "крит " : "") + dmg + "</div>");
+      rumble("light");
+      if (you <= 0) finish(false);
+      else { busy = false; elHit.disabled = false; }
+    }
+    elHit.addEventListener("click", function () {
+      if (busy || you <= 0 || him <= 0) return;
+      busy = true;
+      elHit.disabled = true;
+      const crit = Math.random() < 0.14;
+      const dmg = crit ? 4 : roll(3);
+      him = Math.max(0, him - dmg);
+      paint();
+      line('<div class="' + (crit ? "crit" : "hit") + '">' + youName.toLowerCase() + ": " + (crit ? "крит " : "") + dmg + "</div>");
+      rumble(crit ? "heavy" : "medium");
+      if (him <= 0) finish(true);
+      else setTimeout(shomaHit, 380 + roll(280));
+    });
+    document.getElementById("again").addEventListener("click", reset);
+    document.getElementById("share").addEventListener("click", function () {
+      const text = document.getElementById("over-sub").textContent || summary(you > 0);
+      const shareUrl = "https://t.me/share/url?url=" + encodeURIComponent(location.href.split("#")[0]) +
+        "&text=" + encodeURIComponent(text);
+      if (tg && tg.openTelegramLink) tg.openTelegramLink(shareUrl);
+      else window.location.href = shareUrl;
+    });
+    reset();
+  </script>
+</body>
+</html>
